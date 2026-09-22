@@ -139,26 +139,36 @@ class OaipmhHarvester(HarvesterBase):
         return registry
 
     def _set_config(self, source_config):
+        # Defaults first: a blank Configuration field (no JSON entered) is a
+        # normal, supported case, not an error. Setting these unconditionally
+        # means gather/fetch_stage always find self.credentials etc. defined,
+        # even if the JSON below is missing or malformed.
+        self.credentials = None
+        self.user = 'harvest'
+        self.set_spec = None
+        self.set_filter = None
+        self.md_format = 'oai_dc'
+        self.force_http_get = False
+
+        if not source_config:
+            return
+
         try:
             config_json = json.loads(source_config)
-            try:
-                username = config_json['username']
-                password = config_json['password']
-                self.credentials = (username, password)
-            except (IndexError, KeyError):
-                self.credentials = None
-
-            self.user = 'harvest'
-
-            self.set_spec = config_json.get('set', None)
-
-            self.set_filter = config_json.get('filter', None)
-
-            self.md_format = config_json.get('metadata_prefix', 'oai_dc')
-            self.force_http_get = config_json.get('force_http_get', False)
-
         except ValueError:
+            return
+
+        try:
+            username = config_json['username']
+            password = config_json['password']
+            self.credentials = (username, password)
+        except (IndexError, KeyError):
             pass
+
+        self.set_spec = config_json.get('set', self.set_spec)
+        self.set_filter = config_json.get('filter', self.set_filter)
+        self.md_format = config_json.get('metadata_prefix', self.md_format)
+        self.force_http_get = config_json.get('force_http_get', self.force_http_get)
 
     def fetch_stage(self, harvest_object):
         '''
@@ -403,6 +413,12 @@ class OaipmhHarvester(HarvesterBase):
         tags = []
         for key, value in list(content.items()):
             if key in list(self._get_mapping().values()):
+                continue
+            # metadata_modified is synthesized from the OAI header's
+            # datestamp (not a mapped oai_dc field) and is already applied
+            # to package_dict['modified'] elsewhere; keeping it here too
+            # collides with CKAN's own reserved metadata_modified field.
+            if key == 'metadata_modified':
                 continue
             if key in ['type', 'subject']:
                 if type(value) is list:
