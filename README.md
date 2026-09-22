@@ -1,4 +1,23 @@
 # CKAN Harvester for OAI-PMH
+
+This is a [Phen-ICS](https://github.com/Phen-ICS) fork of
+[mediasuitenz/ckanext-oaipmh](https://github.com/mediasuitenz/ckanext-oaipmh),
+adding two fixes needed to run under **CKAN 2.12** (SQLAlchemy 2.0):
+- `_set_config()` no longer crashes when a harvest source's Configuration
+  field is left blank (a normal, supported case).
+- `metadata_modified` is no longer duplicated into the generic extras list,
+  where it collided with CKAN's own reserved `metadata_modified` field and
+  made every harvested record fail validation.
+
+It also expects the [`oaipmh`](https://pypi.org/project/oaipmh/) package
+(the actively maintained [eth-library/oaipmh](https://github.com/eth-library/oaipmh)
+fork of `pyoai`) rather than the original, unmaintained `pyoai` — the
+original crashes under modern lxml (`XPathEvaluator.evaluate` was removed).
+
+Verified end-to-end against a real OAI-PMH source (arXiv) under CKAN
+2.12 + SQLAlchemy 2.0.51: gather, fetch and import all complete and real
+datasets get created.
+
 ## CKAN < 2.9 support
 As of `1.1.0` this extention has been made to work with CKAN 2.9. While attempts have been made to maintain compatibility with prior version of CKAN, there may be issues. If any issues are discovered we are happy to accept PRs. Alternatively for compatibility <2.9 the `1.0.0` tag can be used.
 ## Instructions
