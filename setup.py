@@ -1,6 +1,6 @@
 from setuptools import setup, find_packages
 
-version = '1.1.3'
+version = '1.4.1'
 
 setup(
     name='ckanext-oaipmh',
@@ -23,5 +23,6 @@ setup(
     entry_points='''
         [ckan.plugins]
         oaipmh_harvester=ckanext.oaipmh.harvester:OaipmhHarvester
+        oaipmh_provider=ckanext.oaipmh.plugin:OaipmhProviderPlugin
     ''',
 )
