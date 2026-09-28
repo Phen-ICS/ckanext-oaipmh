@@ -1,0 +1,17 @@
+[tool.ruff.lint]
+ignore = ["EXE001"]
+
+[tool.ruff.lint.per-file-ignores]
+# harvester.py and test_queue.py are the original mediasuitenz fork's own
+# code, untouched by the CKAN 2.12 fixes or the new oaipmh_provider work
+# this session - not worth a disproportionate rewrite just to satisfy a
+# newly added CI lint gate. provider.py/plugin.py (this session's own
+# code) are held to the full default ruleset with no exceptions.
+"ckanext/oaipmh/harvester.py" = ["UP031", "BLE001", "TRY401", "PLC0414", "PIE810"]
+"ckanext/oaipmh/tests/test_queue.py" = ["PLR0133"]
+
+[tool.bandit]
+# assert is the normal way to write test assertions - bandit's B101 exists
+# because assert gets stripped under `python -O`, which matters for
+# production code, not test code.
+exclude_dirs = ["ckanext/oaipmh/tests"]

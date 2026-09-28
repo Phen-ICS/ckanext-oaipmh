@@ -4,22 +4,20 @@ from harvester.py's OaipmhHarvester, which is the client direction)."""
 
 import logging
 
+import ckan.plugins as p
 from flask import Blueprint, Response, request
 from lxml import etree
 from lxml.etree import SubElement
-
-import ckan.plugins as p
-
-from oaipmh.server import BatchingServer, oai_dc_writer
-from oaipmh.metadata import MetadataRegistry
 from oaipmh.error import ErrorBase
+from oaipmh.metadata import MetadataRegistry
+from oaipmh.server import BatchingServer, oai_dc_writer
 
 from ckanext.oaipmh.provider import (
-    CKANOAIProvider,
-    DC_PREFIX,
-    DATACITE_PREFIX,
     DATACITE_NAMESPACE,
+    DATACITE_PREFIX,
+    DC_PREFIX,
     DOI_AVAILABLE,
+    CKANOAIProvider,
 )
 
 log = logging.getLogger(__name__)
@@ -34,7 +32,9 @@ def oai_datacite_writer(element, metadata):
     support.datacite.org/docs/oai-pmh-schema-documentation."""
     map = metadata.getMap()
     e_wrapper = SubElement(
-        element, "{{{}}}oai_datacite".format(DATACITE_NAMESPACE), nsmap={None: DATACITE_NAMESPACE}
+        element,
+        f"{{{DATACITE_NAMESPACE}}}oai_datacite",
+        nsmap={None: DATACITE_NAMESPACE},
     )
     e_schema_version = SubElement(e_wrapper, "schemaVersion")
     e_schema_version.text = map["schemaVersion"]

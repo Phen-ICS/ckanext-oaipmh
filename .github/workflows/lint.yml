@@ -1,0 +1,42 @@
+name: Lint
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  ruff-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff==0.16.0
+      - run: ruff check ckanext
+
+  ruff-format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff==0.16.0
+      # Scoped to this session's own files, not the whole package: the
+      # original fork's files (harvester.py, metadata.py, tests/) were
+      # never run through ruff format and reformatting them wholesale
+      # now would be a large, purely cosmetic diff unrelated to any
+      # actual change - not something to do in the same pass as adding
+      # this CI gate.
+      - run: ruff format --check ckanext/oaipmh/provider.py ckanext/oaipmh/plugin.py
+
+  bandit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install bandit
+      - run: bandit -c pyproject.toml -r ckanext

@@ -12,11 +12,11 @@ public, active datasets.
 import logging
 from urllib.parse import urlparse
 
-from ckan.plugins import toolkit
 from ckan.lib.search.query import solr_literal
-from oaipmh.common import Header, Metadata, Identify
-from oaipmh.error import CannotDisseminateFormatError, IdDoesNotExistError
+from ckan.plugins import toolkit
+from oaipmh.common import Header, Identify, Metadata
 from oaipmh.datestamp import datetime_to_datestamp
+from oaipmh.error import CannotDisseminateFormatError, IdDoesNotExistError
 
 log = logging.getLogger(__name__)
 
@@ -35,8 +35,9 @@ DATACITE_NAMESPACE = "http://schema.datacite.org/oai/oai-1.1/"
 DATACITE_SCHEMA_VERSION = "4.5"
 
 try:
-    from ckanext.doi.lib.metadata import build_metadata_dict, build_xml_dict
     from datacite import schema45
+
+    from ckanext.doi.lib.metadata import build_metadata_dict, build_xml_dict
 
     DOI_AVAILABLE = True
 except ImportError:
@@ -56,14 +57,14 @@ def _repository_id():
 
 
 def oai_identifier(package_id):
-    return "{}:{}:{}".format(OAI_ID_PREFIX, _repository_id(), package_id)
+    return f"{OAI_ID_PREFIX}:{_repository_id()}:{package_id}"
 
 
 def package_id_from_oai_identifier(identifier):
-    prefix = "{}:{}:".format(OAI_ID_PREFIX, _repository_id())
+    prefix = f"{OAI_ID_PREFIX}:{_repository_id()}:"
     if not identifier.startswith(prefix):
         return None
-    return identifier[len(prefix):]
+    return identifier[len(prefix) :]
 
 
 def _admin_email():
@@ -96,7 +97,7 @@ def _dc_map(pkg):
     identifiers = [toolkit.url_for("dataset.read", id=pkg["name"], qualified=True)]
     doi = pkg.get("doi_identifier")
     if doi:
-        identifiers.append("https://doi.org/{}".format(doi))
+        identifiers.append(f"https://doi.org/{doi}")
 
     dc = {
         "title": [pkg["title"]],
@@ -137,9 +138,7 @@ def _datacite_map(pkg):
         xml_dict = build_xml_dict(metadata_dict)
         resource_xml = schema45.tostring(xml_dict)
     except (ValueError, KeyError) as e:
-        raise CannotDisseminateFormatError(
-            "{}: {}".format(DATACITE_PREFIX, e)
-        )
+        raise CannotDisseminateFormatError(f"{DATACITE_PREFIX}: {e}")
     # lxml's fromstring() (used by the writer in plugin.py to re-parse
     # this) refuses a unicode str carrying an XML declaration - only
     # bytes are accepted in that case. tostring() returns either,
@@ -232,10 +231,9 @@ class CKANOAIProvider:
             {"ignore_auth": False}, {"all_fields": True}
         )
         sets = [
-            (org["name"], org["title"] or org["name"], None)
-            for org in organizations
+            (org["name"], org["title"] or org["name"], None) for org in organizations
         ]
-        return sets[cursor:cursor + batch_size]
+        return sets[cursor : cursor + batch_size]
 
     def _search_page(self, start, rows, set=None, from_=None, until=None):
         """One direct Solr page - no accumulation, no internal looping.
@@ -253,11 +251,11 @@ class CKANOAIProvider:
             # set=x" OR *:*"). solr_literal is the same escape CKAN's
             # own core uses for this exact class of value (a single
             # token being matched exactly, e.g. site_id).
-            query_parts.append("organization:{}".format(solr_literal(set)))
+            query_parts.append(f"organization:{solr_literal(set)}")
         if from_ or until:
             start_ts = datetime_to_datestamp(from_) if from_ else "*"
             end_ts = datetime_to_datestamp(until) if until else "*"
-            query_parts.append("metadata_modified:[{} TO {}]".format(start_ts, end_ts))
+            query_parts.append(f"metadata_modified:[{start_ts} TO {end_ts}]")
         return toolkit.get_action("package_search")(
             {"ignore_auth": False},
             {"q": " AND ".join(query_parts), "rows": rows, "start": start},

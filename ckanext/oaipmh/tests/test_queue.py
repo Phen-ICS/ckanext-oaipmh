@@ -1,9 +1,9 @@
-from ckanext.oaipmh.harvester import OaipmhHarvester
+
+from ckan import logic, model
+
 import ckanext.harvest.model as harvest_model
-import ckanext.harvest.queue as queue
-import ckan.logic as logic
-from ckan import model
-from builtins import object
+from ckanext.harvest import queue
+from ckanext.oaipmh.harvester import OaipmhHarvester
 
 
 class TestOaipmhHarvester(OaipmhHarvester):
@@ -18,7 +18,7 @@ class TestOaipmhHarvester(OaipmhHarvester):
         return True
 
 
-class TestHarvestQueue(object):
+class TestHarvestQueue:
     @classmethod
     def setup_class(cls):
         harvest_model.setup()
@@ -64,7 +64,7 @@ class TestHarvestQueue(object):
 
         assert harvest_job['source_id'] == harvest_source['id'], harvest_job
 
-        assert harvest_job['status'] == u'New'
+        assert harvest_job['status'] == 'New'
 
         logic.get_action('harvest_jobs_run')(
             context,
@@ -74,7 +74,7 @@ class TestHarvestQueue(object):
         assert logic.get_action('harvest_job_show')(
             context,
             {'id': job_id}
-        )['status'] == u'Running'
+        )['status'] == 'Running'
 
         reply = consumer.basic_get(queue='ckan.harvest.gather')
 

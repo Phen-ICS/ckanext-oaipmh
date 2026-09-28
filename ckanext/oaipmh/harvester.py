@@ -1,23 +1,18 @@
-from six import text_type
-from six.moves import urllib as urllib
-import logging
 import json
+import logging
 import traceback
 
-from ckan.model import Session
-from ckan.logic import get_action
+import oaipmh.client
 from ckan import model
+from ckan.lib.munge import munge_tag, munge_title_to_name
+from ckan.logic import get_action
+from ckan.model import Session
+from oaipmh.metadata import MetadataRegistry
+from six.moves import urllib as urllib
 
 from ckanext.harvest.harvesters.base import HarvesterBase
-from ckan.lib.munge import munge_tag
-from ckan.lib.munge import munge_title_to_name
 from ckanext.harvest.model import HarvestObject
-
-import oaipmh.client
-from oaipmh.metadata import MetadataRegistry
-
-from ckanext.oaipmh.metadata import oai_ddi_reader
-from ckanext.oaipmh.metadata import oai_dc_reader
+from ckanext.oaipmh.metadata import oai_dc_reader, oai_ddi_reader
 
 log = logging.getLogger(__name__)
 
@@ -68,7 +63,7 @@ class OaipmhHarvester(HarvesterBase):
             client.identify()  # check if identify works
             for header in self._identifier_generator(client):
                 if self.set_filter and self.set_filter not in header.setSpec():
-                    log.warn(
+                    log.warning(
                         'config:set %s matches setSpec list %s, but filter %s does not'
                         % (self.set_spec, header.setSpec(), self.set_filter)
                     )
@@ -196,7 +191,7 @@ class OaipmhHarvester(HarvesterBase):
             )
             record = None
             try:
-                log.warn(
+                log.warning(
                     "Load %s with metadata prefix '%s'" %
                     (harvest_object.guid, self.md_format)
                 )
@@ -230,7 +225,7 @@ class OaipmhHarvester(HarvesterBase):
                 content_dict['set_spec'] = header.setSpec()
                 if metadata_modified:
                     content_dict['metadata_modified'] = metadata_modified
-                log.warn(content_dict)
+                log.warning(content_dict)
                 content = json.dumps(content_dict)
             except Exception:
                 log.exception('Dumping the metadata failed!')
@@ -458,7 +453,7 @@ class OaipmhHarvester(HarvesterBase):
 
     def _extract_resources(self, url, content):
         resources = []
-        log.warn('URL of ressource: %s' % url)
+        log.warning('URL of ressource: %s' % url)
         if url:
             try:
                 resource_format = content['format'][0]
