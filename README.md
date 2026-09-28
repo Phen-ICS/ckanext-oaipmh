@@ -1,4 +1,4 @@
-# CKAN Harvester for OAI-PMH
+# CKAN OAI-PMH Harvester and Server
 
 This is a [Phen-ICS](https://github.com/Phen-ICS) fork of
 [mediasuitenz/ckanext-oaipmh](https://github.com/mediasuitenz/ckanext-oaipmh),
@@ -17,6 +17,41 @@ original crashes under modern lxml (`XPathEvaluator.evaluate` was removed).
 Verified end-to-end against a real OAI-PMH source (arXiv) under CKAN
 2.12 + SQLAlchemy 2.0.51: gather, fetch and import all complete and real
 datasets get created.
+
+## OAI-PMH server (`oaipmh_provider`)
+
+Added on top of the original fork: a second, independent plugin exposing
+this CKAN instance's own **public** datasets as an OAI-PMH 2.0 repository,
+so other systems can harvest *from* it (the opposite direction from
+`oaipmh_harvester` above, which harvests *into* CKAN).
+
+- Add `oaipmh_provider` to `ckan.plugins`.
+- Endpoint: `<ckan url>/oai` (`GET` or `POST`), answering all six OAI-PMH
+  verbs (`Identify`, `ListMetadataFormats`, `ListSets`, `ListIdentifiers`,
+  `ListRecords`, `GetRecord`).
+- Metadata format: Dublin Core (`oai_dc`) only, for now.
+- **Sets = CKAN organizations** (one-to-one; use groups instead if a
+  dataset ever needs to belong to more than one set at a time - CKAN
+  organizations are exclusive, groups aren't).
+- Backed by `package_search` in an anonymous context, so CKAN's own
+  public/private visibility rules apply automatically - a private dataset
+  is invisible to `ListRecords`/`ListIdentifiers` and `GetRecord` answers
+  `idDoesNotExist` for one, exactly as if it didn't exist. Verified
+  directly against a real private dataset, not just assumed from reading
+  the code.
+- `ckanext.oaipmh.repository_id` (optional): the namespace identifier
+  used in `oai:<this>:<dataset-id>`. Defaults to `ckan.site_url`'s
+  hostname, which is fine for a stable production URL but should be set
+  explicitly if `ckan.site_url` varies between environments (as it does
+  in this stack's own dev/integration/validation/production contexts).
+- `ckanext.oaipmh.admin_email` (optional): defaults to
+  `ckanext.contact.mail_to` (the address this stack's own contact form
+  delivers to), falling back to core CKAN's `email_to`.
+
+Verified against a real `oaipmh.client.Client` (the same library
+`oaipmh_harvester` itself uses) round-tripping every verb, including
+transparent multi-page `resumptionToken` pagination and a `set` filter,
+against a real CKAN 2.12 instance.
 
 ## CKAN < 2.9 support
 As of `1.1.0` this extention has been made to work with CKAN 2.9. While attempts have been made to maintain compatibility with prior version of CKAN, there may be issues. If any issues are discovered we are happy to accept PRs. Alternatively for compatibility <2.9 the `1.0.0` tag can be used.
