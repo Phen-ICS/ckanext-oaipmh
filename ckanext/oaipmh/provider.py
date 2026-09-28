@@ -13,6 +13,7 @@ import logging
 from urllib.parse import urlparse
 
 from ckan.plugins import toolkit
+from ckan.lib.search.query import solr_literal
 from oaipmh.common import Header, Metadata, Identify
 from oaipmh.error import (
     CannotDisseminateFormatError,
@@ -236,7 +237,16 @@ class CKANOAIProvider:
     def _search(self, set=None, from_=None, until=None):
         query_parts = ["*:*"]
         if set:
-            query_parts.append('organization:"{}"'.format(set))
+            # set is caller-controlled (the OAI-PMH `set` request param,
+            # unauthenticated) and was going straight into a raw Solr
+            # query string - a real Solr/Lucene query injection (a
+            # crafted value could break out of the quoted term and
+            # inject arbitrary query clauses, or just crash the request
+            # with a syntax error, confirmed directly with
+            # set=x" OR *:*"). solr_literal is the same escape CKAN's
+            # own core uses for this exact class of value (a single
+            # token being matched exactly, e.g. site_id).
+            query_parts.append("organization:{}".format(solr_literal(set)))
         if from_ or until:
             start = datetime_to_datestamp(from_) if from_ else "*"
             end = datetime_to_datestamp(until) if until else "*"

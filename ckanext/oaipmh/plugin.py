@@ -62,8 +62,21 @@ def index():
         # <error> elements into the response XML for protocol-level
         # errors (bad verb, bad argument, etc.) - this only catches
         # something unexpected escaping that.
-        log.exception("Unhandled error answering OAI-PMH request %r", params)
+        log.exception("Unhandled OAI-PMH error answering %r", params)
         return Response(str(e), status=500, mimetype="text/plain")
+    except Exception:
+        # oaipmh.server.XMLTreeServer.handleException re-raises anything
+        # that isn't its own ErrorBase, so a genuine bug here (not a
+        # protocol-level error) would otherwise reach Flask itself -
+        # normally a generic 500, but the full interactive Werkzeug
+        # debugger (source, local variables, an eval console) if this
+        # ever ran with debug mode on, to a caller /oai never
+        # authenticates. Catching broadly here and always returning a
+        # flat message is what an anonymous, unauthenticated public
+        # endpoint needs regardless of the app's own debug setting -
+        # the real detail still goes to the log, not the response.
+        log.exception("Unexpected error answering OAI-PMH request %r", params)
+        return Response("Internal error", status=500, mimetype="text/plain")
     return Response(xml, mimetype="text/xml")
 
 
