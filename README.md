@@ -29,7 +29,25 @@ so other systems can harvest *from* it (the opposite direction from
 - Endpoint: `<ckan url>/oai` (`GET` or `POST`), answering all six OAI-PMH
   verbs (`Identify`, `ListMetadataFormats`, `ListSets`, `ListIdentifiers`,
   `ListRecords`, `GetRecord`).
-- Metadata format: Dublin Core (`oai_dc`) only, for now.
+- Metadata formats:
+  - `oai_dc` (Dublin Core) — always available. Deliberately minimal (15
+    fixed elements): title, creator, description, date, publisher,
+    subject, rights, identifier, type. No room for FAIR3R/FDF's own rich
+    fields (genes, alleles, species...).
+  - `oai_datacite` — available whenever `ckanext-doi` is installed
+    alongside this plugin. Reuses the exact DataCite XML `ckanext-doi`
+    already builds to mint each dataset's DOI (see
+    `ckanext.doi.lib.metadata`), wrapped per the standard OAI-DataCite
+    envelope (`schemaVersion`, `datacentreSymbol` - from
+    `ckanext.doi.account_name` - and `payload`; see
+    [DataCite's OAI-PMH schema docs](https://support.datacite.org/docs/oai-pmh-schema-documentation)).
+    Carries the full FDF schema (genes, alleles, species, ORCID,
+    ROR...), not just the 15 oai_dc fields. A dataset that was never
+    meant to carry DOI metadata (e.g. one harvested from an OAI-PMH
+    *source* rather than created through FDF) is simply left out of
+    `ListRecords`/`ListIdentifiers` for this format and `GetRecord`
+    answers `cannotDisseminateFormat` for it - verified directly against
+    a real such dataset, not just assumed from reading the code.
 - **Sets = CKAN organizations** (one-to-one; use groups instead if a
   dataset ever needs to belong to more than one set at a time - CKAN
   organizations are exclusive, groups aren't).

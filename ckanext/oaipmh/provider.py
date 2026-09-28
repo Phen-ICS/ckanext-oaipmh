@@ -14,13 +14,36 @@ from urllib.parse import urlparse
 
 from ckan.plugins import toolkit
 from oaipmh.common import Header, Metadata, Identify
-from oaipmh.error import IdDoesNotExistError, NoRecordsMatchError
+from oaipmh.error import (
+    CannotDisseminateFormatError,
+    IdDoesNotExistError,
+    NoRecordsMatchError,
+)
 from oaipmh.datestamp import datetime_to_datestamp
 
 log = logging.getLogger(__name__)
 
-METADATA_PREFIX = "oai_dc"
+DC_PREFIX = "oai_dc"
 OAI_ID_PREFIX = "oai"
+
+# Dublin Core is deliberately minimal (15 fixed elements) and has no room
+# for FAIR3R/FDF's own rich, domain-specific fields (genes, alleles,
+# species...). ckanext-doi already builds a full DataCite XML record for
+# every FDF dataset (to mint its DOI) - reusing it here, instead of
+# reinventing a second metadata mapping, is both less code and the
+# metadataPrefix a real DataCite-aware harvester actually expects
+# (see support.datacite.org/docs/oai-pmh-schema-documentation).
+DATACITE_PREFIX = "oai_datacite"
+DATACITE_NAMESPACE = "http://schema.datacite.org/oai/oai-1.1/"
+DATACITE_SCHEMA_VERSION = "4.5"
+
+try:
+    from ckanext.doi.lib.metadata import build_metadata_dict, build_xml_dict
+    from datacite import schema45
+
+    DOI_AVAILABLE = True
+except ImportError:
+    DOI_AVAILABLE = False
 
 
 def _repository_id():
@@ -99,6 +122,48 @@ def _dc_map(pkg):
     return dc
 
 
+def _datacite_map(pkg):
+    """Build the map oaipmh_provider's own datacite writer (plugin.py)
+    expects: the same DataCite XML ckanext-doi builds to mint this
+    dataset's DOI, wrapped per the OAI-DataCite schema.
+
+    Raises CannotDisseminateFormatError for a dataset that was never
+    meant to carry DOI metadata in the first place (e.g. a dataset
+    harvested from an OAI-PMH *source*, not created through FDF) -
+    ckanext-doi's own build_metadata_dict requires fields like a
+    properly formatted creator name that such datasets don't have
+    (confirmed directly: ValueError: Creator name must be supplied,
+    the same failure already known from harvest_source_update - see
+    the migration doc's "Trouvaille annexe" section)."""
+    try:
+        metadata_dict = build_metadata_dict(pkg)
+        xml_dict = build_xml_dict(metadata_dict)
+        resource_xml = schema45.tostring(xml_dict)
+    except (ValueError, KeyError) as e:
+        raise CannotDisseminateFormatError(
+            "{}: {}".format(DATACITE_PREFIX, e)
+        )
+    # lxml's fromstring() (used by the writer in plugin.py to re-parse
+    # this) refuses a unicode str carrying an XML declaration - only
+    # bytes are accepted in that case. tostring() returns either,
+    # depending on datacite package version.
+    if isinstance(resource_xml, str):
+        resource_xml = resource_xml.encode("utf-8")
+    return {
+        "schemaVersion": DATACITE_SCHEMA_VERSION,
+        "datacentreSymbol": toolkit.config.get("ckanext.doi.account_name", ""),
+        "resource_xml": resource_xml,
+    }
+
+
+def _metadata_map(pkg, metadata_prefix):
+    if metadata_prefix == DATACITE_PREFIX:
+        if not DOI_AVAILABLE:
+            raise CannotDisseminateFormatError(metadata_prefix)
+        return _datacite_map(pkg)
+    return _dc_map(pkg)
+
+
 def _header(pkg):
     organization = pkg.get("organization") or {}
     setspec = [organization["name"]] if organization.get("name") else []
@@ -111,8 +176,8 @@ def _header(pkg):
     )
 
 
-def _record(pkg):
-    return (_header(pkg), Metadata(None, _dc_map(pkg)), None)
+def _record(pkg, metadata_prefix):
+    return (_header(pkg), Metadata(None, _metadata_map(pkg, metadata_prefix)), None)
 
 
 class CKANOAIProvider:
@@ -142,13 +207,22 @@ class CKANOAIProvider:
         )
 
     def listMetadataFormats(self, identifier=None):
-        return [
+        formats = [
             (
-                METADATA_PREFIX,
+                DC_PREFIX,
                 "http://www.openarchives.org/OAI/2.0/oai_dc.xsd",
                 "http://www.openarchives.org/OAI/2.0/oai_dc/",
             )
         ]
+        if DOI_AVAILABLE:
+            formats.append(
+                (
+                    DATACITE_PREFIX,
+                    "http://schema.datacite.org/oai/oai-1.1/oai.xsd",
+                    DATACITE_NAMESPACE,
+                )
+            )
+        return formats
 
     def listSets(self):
         organizations = toolkit.get_action("organization_list")(
@@ -192,7 +266,22 @@ class CKANOAIProvider:
         packages = list(self._search(set=set, from_=from_, until=until))
         if not packages:
             raise NoRecordsMatchError("No records match the given criteria")
-        return [_record(pkg) for pkg in packages]
+        records = []
+        for pkg in packages:
+            try:
+                records.append(_record(pkg, metadataPrefix))
+            except CannotDisseminateFormatError:
+                # This one dataset can't be represented in the requested
+                # format (see _datacite_map) - leave it out of this
+                # listing rather than failing the whole batch over it.
+                log.info(
+                    "Skipping %s from ListRecords(%s): cannot disseminate",
+                    pkg.get("name"),
+                    metadataPrefix,
+                )
+        if not records:
+            raise NoRecordsMatchError("No records match the given criteria")
+        return records
 
     def getRecord(self, metadataPrefix, identifier):
         package_id = package_id_from_oai_identifier(identifier)
@@ -204,4 +293,4 @@ class CKANOAIProvider:
             )
         except (toolkit.ObjectNotFound, toolkit.NotAuthorized):
             raise IdDoesNotExistError(identifier)
-        return _record(pkg)
+        return _record(pkg, metadataPrefix)
