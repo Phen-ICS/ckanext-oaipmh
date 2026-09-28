@@ -10,7 +10,7 @@ from lxml.etree import SubElement
 
 import ckan.plugins as p
 
-from oaipmh.server import Server, oai_dc_writer
+from oaipmh.server import BatchingServer, oai_dc_writer
 from oaipmh.metadata import MetadataRegistry
 from oaipmh.error import ErrorBase
 
@@ -49,7 +49,7 @@ def _server():
     registry.registerWriter(DC_PREFIX, oai_dc_writer)
     if DOI_AVAILABLE:
         registry.registerWriter(DATACITE_PREFIX, oai_datacite_writer)
-    return Server(CKANOAIProvider(), metadata_registry=registry)
+    return BatchingServer(CKANOAIProvider(), metadata_registry=registry)
 
 
 @blueprint.route("/oai", methods=["GET", "POST"])

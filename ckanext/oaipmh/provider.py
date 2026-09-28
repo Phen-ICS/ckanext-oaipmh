@@ -15,11 +15,7 @@ from urllib.parse import urlparse
 from ckan.plugins import toolkit
 from ckan.lib.search.query import solr_literal
 from oaipmh.common import Header, Metadata, Identify
-from oaipmh.error import (
-    CannotDisseminateFormatError,
-    IdDoesNotExistError,
-    NoRecordsMatchError,
-)
+from oaipmh.error import CannotDisseminateFormatError, IdDoesNotExistError
 from oaipmh.datestamp import datetime_to_datestamp
 
 log = logging.getLogger(__name__)
@@ -225,16 +221,27 @@ class CKANOAIProvider:
             )
         return formats
 
-    def listSets(self):
+    def listSets(self, cursor=0, batch_size=10):
+        # BatchingResumption passes cursor/batch_size for ListSets too,
+        # despite IBatchingOAI's own docstring only mentioning them for
+        # listIdentifiers/listRecords (confirmed directly: omitting them
+        # here raises "got an unexpected keyword argument 'cursor'").
+        # CKAN organizations are always few enough to fetch in one go
+        # and slice in Python - no Solr paging needed.
         organizations = toolkit.get_action("organization_list")(
             {"ignore_auth": False}, {"all_fields": True}
         )
-        return [
+        sets = [
             (org["name"], org["title"] or org["name"], None)
             for org in organizations
         ]
+        return sets[cursor:cursor + batch_size]
 
-    def _search(self, set=None, from_=None, until=None):
+    def _search_page(self, start, rows, set=None, from_=None, until=None):
+        """One direct Solr page - no accumulation, no internal looping.
+        Used as-is by listIdentifiers (IBatchingOAI's cursor/batch_size
+        map straight onto Solr's own start/rows) and as the building
+        block listRecords loops over below."""
         query_parts = ["*:*"]
         if set:
             # set is caller-controlled (the OAI-PMH `set` request param,
@@ -248,49 +255,74 @@ class CKANOAIProvider:
             # token being matched exactly, e.g. site_id).
             query_parts.append("organization:{}".format(solr_literal(set)))
         if from_ or until:
-            start = datetime_to_datestamp(from_) if from_ else "*"
-            end = datetime_to_datestamp(until) if until else "*"
-            query_parts.append("metadata_modified:[{} TO {}]".format(start, end))
+            start_ts = datetime_to_datestamp(from_) if from_ else "*"
+            end_ts = datetime_to_datestamp(until) if until else "*"
+            query_parts.append("metadata_modified:[{} TO {}]".format(start_ts, end_ts))
+        return toolkit.get_action("package_search")(
+            {"ignore_auth": False},
+            {"q": " AND ".join(query_parts), "rows": rows, "start": start},
+        )
 
-        rows = 1000
-        start_row = 0
-        while True:
-            page = toolkit.get_action("package_search")(
-                {"ignore_auth": False},
-                {"q": " AND ".join(query_parts), "rows": rows, "start": start_row},
+    def listIdentifiers(
+        self, metadataPrefix, set=None, from_=None, until=None, cursor=0, batch_size=10
+    ):
+        # _header() never fails (every real CKAN package has an id and a
+        # metadata_created/modified timestamp) - a direct, single Solr
+        # page maps cleanly onto BatchingServer's cursor/batch_size with
+        # no risk of the two falling out of sync.
+        page = self._search_page(cursor, batch_size, set=set, from_=from_, until=until)
+        return [_header(pkg) for pkg in page.get("results") or []]
+
+    def listRecords(
+        self, metadataPrefix, set=None, from_=None, until=None, cursor=0, batch_size=10
+    ):
+        # Unlike listIdentifiers, a record can fail to build in the
+        # requested format (see _datacite_map: a dataset without DOI
+        # metadata can't be disseminated as oai_datacite) and gets left
+        # out - so a single direct Solr page could come back short even
+        # though more matching datasets exist further in the catalog.
+        # This loops through as many additional Solr pages as needed to
+        # either fill this one batch or exhaust the catalog, keeping the
+        # cost bounded to "one page worth of skips", not the whole
+        # catalog (the previous, pre-batching behaviour). Advances
+        # `position` past every dataset it looks at, success or skip, so
+        # the next page picks up exactly where this one left off within
+        # the underlying catalog ordering.
+        #
+        # Known limitation specific to this format: BatchingServer's own
+        # resumptionToken always advances the cursor it hands back by a
+        # fixed `batch_size`, not by how far `position` actually moved
+        # here - so if a page's worth of skips pushes `position` past
+        # `cursor + batch_size`, the *next* page's cursor (computed by
+        # the library, not by this method) can undercount slightly.
+        # Every dataset that can be disseminated as oai_datacite is
+        # still reachable via ListRecords overall (nothing is
+        # permanently hidden), but a harvester paginating through a
+        # catalog with many non-DOI datasets mixed in could see a
+        # handful of duplicate records across pages in this one format.
+        # Not a concern for oai_dc, which every dataset can always be
+        # disseminated as.
+        records = []
+        position = cursor
+        while len(records) < batch_size:
+            page = self._search_page(
+                position, batch_size - len(records), set=set, from_=from_, until=until
             )
             results = page.get("results") or []
+            if not results:
+                break
             for pkg in results:
-                yield pkg
-            start_row += rows
-            if start_row >= page.get("count", 0) or not results:
-                return
-
-    def listIdentifiers(self, metadataPrefix, set=None, from_=None, until=None):
-        packages = list(self._search(set=set, from_=from_, until=until))
-        if not packages:
-            raise NoRecordsMatchError("No records match the given criteria")
-        return [_header(pkg) for pkg in packages]
-
-    def listRecords(self, metadataPrefix, set=None, from_=None, until=None):
-        packages = list(self._search(set=set, from_=from_, until=until))
-        if not packages:
-            raise NoRecordsMatchError("No records match the given criteria")
-        records = []
-        for pkg in packages:
-            try:
-                records.append(_record(pkg, metadataPrefix))
-            except CannotDisseminateFormatError:
-                # This one dataset can't be represented in the requested
-                # format (see _datacite_map) - leave it out of this
-                # listing rather than failing the whole batch over it.
-                log.info(
-                    "Skipping %s from ListRecords(%s): cannot disseminate",
-                    pkg.get("name"),
-                    metadataPrefix,
-                )
-        if not records:
-            raise NoRecordsMatchError("No records match the given criteria")
+                position += 1
+                try:
+                    records.append(_record(pkg, metadataPrefix))
+                except CannotDisseminateFormatError:
+                    log.info(
+                        "Skipping %s from ListRecords(%s): cannot disseminate",
+                        pkg.get("name"),
+                        metadataPrefix,
+                    )
+                if len(records) >= batch_size:
+                    break
         return records
 
     def getRecord(self, metadataPrefix, identifier):
