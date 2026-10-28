@@ -1,148 +1,121 @@
-# CKAN OAI-PMH Harvester and Server
+![CKAN](https://img.shields.io/badge/CKAN-2.12.1-orange)
+![Python](https://img.shields.io/badge/python-3.12-blue)
+![License](https://img.shields.io/badge/license-AGPL--3.0-blue)
 
-This is a [Phen-ICS](https://github.com/Phen-ICS) fork of
-[mediasuitenz/ckanext-oaipmh](https://github.com/mediasuitenz/ckanext-oaipmh),
-adding two fixes needed to run under **CKAN 2.12** (SQLAlchemy 2.0):
-- `_set_config()` no longer crashes when a harvest source's Configuration
-  field is left blank (a normal, supported case).
-- `metadata_modified` is no longer duplicated into the generic extras list,
-  where it collided with CKAN's own reserved `metadata_modified` field and
-  made every harvested record fail validation.
+# ckanext-oaipmh
 
-It also expects the [`oaipmh`](https://pypi.org/project/oaipmh/) package
-(the actively maintained [eth-library/oaipmh](https://github.com/eth-library/oaipmh)
-fork of `pyoai`) rather than the original, unmaintained `pyoai` — the
-original crashes under modern lxml (`XPathEvaluator.evaluate` was removed).
+[OAI-PMH](https://www.openarchives.org/pmh/) for CKAN, in both
+directions - two independent plugins, enable either or both:
 
-Verified end-to-end against a real OAI-PMH source (arXiv) under CKAN
-2.12 + SQLAlchemy 2.0.51: gather, fetch and import all complete and real
-datasets get created.
+| Plugin | Direction | What it does |
+|---|---|---|
+| `oaipmh_provider` | **CKAN -> others** | Serves the catalogue's public datasets as an OAI-PMH 2.0 repository at `<ckan url>/oai`, for other catalogues and aggregators to harvest |
+| `oaipmh_harvester` | **others -> CKAN** | Imports the records of any OAI-PMH repository (HAL, arXiv, Zenodo, institutional archives...) as CKAN datasets, with [ckanext-harvest](https://github.com/ckan/ckanext-harvest) |
 
-## OAI-PMH server (`oaipmh_provider`)
+> Fork of [mediasuitenz/ckanext-oaipmh](https://github.com/mediasuitenz/ckanext-oaipmh),
+> maintained by [Phen-ICS](https://github.com/Phen-ICS) (CNRS/IGBMC) for
+> the [FAIR3R](https://fair3r.fr) catalogue.
 
-Added on top of the original fork: a second, independent plugin exposing
-this CKAN instance's own **public** datasets as an OAI-PMH 2.0 repository,
-so other systems can harvest *from* it (the opposite direction from
-`oaipmh_harvester` above, which harvests *into* CKAN).
+## What this fork changes
 
-- Add `oaipmh_provider` to `ckan.plugins`.
-- Endpoint: `<ckan url>/oai` (`GET` or `POST`), answering all six OAI-PMH
-  verbs (`Identify`, `ListMetadataFormats`, `ListSets`, `ListIdentifiers`,
-  `ListRecords`, `GetRecord`).
-- Metadata formats:
-  - `oai_dc` (Dublin Core) — always available. Deliberately minimal (15
-    fixed elements): title, creator, description, date, publisher,
-    subject, rights, identifier, type. No room for FAIR3R/FDF's own rich
-    fields (genes, alleles, species...).
-  - `oai_datacite` — available whenever `ckanext-doi` is installed
-    alongside this plugin. Reuses the exact DataCite XML `ckanext-doi`
-    already builds to mint each dataset's DOI (see
-    `ckanext.doi.lib.metadata`), wrapped per the standard OAI-DataCite
-    envelope (`schemaVersion`, `datacentreSymbol` - from
-    `ckanext.doi.account_name` - and `payload`; see
-    [DataCite's OAI-PMH schema docs](https://support.datacite.org/docs/oai-pmh-schema-documentation)).
-    Carries the full FDF schema (genes, alleles, species, ORCID,
-    ROR...), not just the 15 oai_dc fields. A dataset that was never
-    meant to carry DOI metadata (e.g. one harvested from an OAI-PMH
-    *source* rather than created through FDF) is simply left out of
-    `ListRecords`/`ListIdentifiers` for this format and `GetRecord`
-    answers `cannotDisseminateFormat` for it - verified directly against
-    a real such dataset, not just assumed from reading the code.
-- **Sets = CKAN organizations** (one-to-one; use groups instead if a
-  dataset ever needs to belong to more than one set at a time - CKAN
-  organizations are exclusive, groups aren't).
-- Backed by `package_search` in an anonymous context, so CKAN's own
-  public/private visibility rules apply automatically - a private dataset
-  is invisible to `ListRecords`/`ListIdentifiers` and `GetRecord` answers
-  `idDoesNotExist` for one, exactly as if it didn't exist. Verified
-  directly against a real private dataset, not just assumed from reading
-  the code.
-- `ckanext.oaipmh.repository_id` (optional): the namespace identifier
-  used in `oai:<this>:<dataset-id>`. Defaults to `ckan.site_url`'s
-  hostname, which is fine for a stable production URL but should be set
-  explicitly if `ckan.site_url` varies between environments (as it does
-  in this stack's own dev/integration/validation/production contexts).
-- `ckanext.oaipmh.admin_email` (optional): defaults to
-  `ckanext.contact.mail_to` (the address this stack's own contact form
-  delivers to), falling back to core CKAN's `email_to`.
+- **New: the OAI-PMH server** (`oaipmh_provider`), described below.
+- **CKAN 2.12** (SQLAlchemy 2.0) harvester fixes, checked end to end
+  against arXiv (gather, fetch and import):
+  - a harvest source with an empty Configuration field no longer crashes;
+  - `metadata_modified` is no longer copied into the extras, where it
+    collided with CKAN's own field and made every record fail validation.
+- Uses the maintained [`oaipmh`](https://pypi.org/project/oaipmh/) package
+  ([eth-library/oaipmh](https://github.com/eth-library/oaipmh)) instead of
+  the original `pyoai`, which crashes with current lxml.
+- CI: ruff and bandit on every push.
 
-Verified against a real `oaipmh.client.Client` (the same library
-`oaipmh_harvester` itself uses) round-tripping every verb, including
-transparent multi-page `resumptionToken` pagination and a `set` filter,
-against a real CKAN 2.12 instance.
+## Installation
 
-## CKAN < 2.9 support
-As of `1.1.0` this extention has been made to work with CKAN 2.9. While attempts have been made to maintain compatibility with prior version of CKAN, there may be issues. If any issues are discovered we are happy to accept PRs. Alternatively for compatibility <2.9 the `1.0.0` tag can be used.
-## Instructions
+1. Install the OAI-PMH library, then the plugin, in CKAN's virtualenv:
 
-### Installation
+   ```shell
+   pip install oaipmh==3.2.1
+   pip install -e "git+https://github.com/Phen-ICS/ckanext-oaipmh.git#egg=ckanext-oaipmh"
+   ```
 
-Use `pip` to install this plugin. This example installs it in `/var/www`
+2. Enable the plugin(s) in `ckan.ini`:
 
-```bash
-source /home/www-data/pyenv/bin/activate
-pip install -e git+https://github.com/mediasuitenz/ckanext-oaipmh.git#egg=ckanext-oaipmh --src /var/www
-cd /var/www/ckanext-oaipmh
-pip install -r requirements.txt
-python setup.py develop
+   ```ini
+   ckan.plugins = ... oaipmh_provider
+   # and/or, with ckanext-harvest installed and enabled:
+   ckan.plugins = ... harvest oaipmh_harvester
+   ```
+
+3. Restart CKAN.
+
+## The OAI-PMH server (`oaipmh_provider`)
+
+- **Endpoint**: `<ckan url>/oai` (`GET` or `POST`), with the six OAI-PMH
+  verbs: `Identify`, `ListMetadataFormats`, `ListSets`, `ListIdentifiers`,
+  `ListRecords`, `GetRecord`. Long lists are paged with `resumptionToken`.
+  Try it: `<ckan url>/oai?verb=Identify`.
+- **Only public datasets**: records come from `package_search` as an
+  anonymous user, so a private dataset is invisible (`GetRecord` answers
+  `idDoesNotExist`, as if it didn't exist).
+- **Sets = organizations**: `ListRecords&set=<organization name>` lists
+  one organization's datasets.
+- **Metadata formats**:
+
+  | Format | When | Content |
+  |---|---|---|
+  | `oai_dc` | always | Dublin Core: title, creator, description, date, publisher, subject, rights, identifier, type |
+  | `oai_datacite` | when [ckanext-doi](https://github.com/Phen-ICS/ckanext-doi) is installed | The same DataCite XML as the dataset's DOI - with FAIR3R, the full FDF metadata (ORCID, ROR, genes, organisms...). A dataset without DOI metadata (e.g. a harvested one) is left out of this format |
+
+- **Settings** (optional):
+
+  | Setting | Default | Meaning |
+  |---|---|---|
+  | `ckanext.oaipmh.repository_id` | `ckan.site_url`'s host name | Namespace of the record ids, `oai:<this>:<dataset id>`. Set it when `ckan.site_url` differs between environments, so ids stay stable |
+  | `ckanext.oaipmh.admin_email` | `ckanext.contact.mail_to`, then `email_to` | Contact address given by `Identify` |
+
+  The repository name is `ckan.site_title`; the `oai_datacite` data centre
+  symbol is `ckanext.doi.account_name`.
+
+## The harvester (`oaipmh_harvester`)
+
+Needs [ckanext-harvest](https://github.com/ckan/ckanext-harvest), its
+queue (Redis) and a **sysadmin user named `harvest`**.
+
+1. Go to `<ckan url>/harvest/new`.
+2. **URL**: the OAI-PMH base URL of the source, e.g.
+   `https://export.arxiv.org/oai2` (see the
+   [registered repositories](https://www.openarchives.org/Register/BrowseSites)).
+3. **Source type**: *OAI-PMH Harvester*.
+4. **Configuration** (optional, JSON, keys can be combined):
+
+   | Key | Use |
+   |---|---|
+   | `"set": "physics"` | Harvest one set only |
+   | `"metadata_prefix": "oai_dc"` | Metadata format (`oai_dc` or `oai_ddi`) |
+   | `"username": "...", "password": "..."` | Source with HTTP authentication |
+   | `"force_http_get": true` | Source that doesn't accept POST |
+
+5. Save, then **Reharvest**.
+
+The harvest consumers must be running (FAIR3R runs them under
+supervisor):
+
+```shell
+ckan -c /path/to/ckan.ini harvester gather-consumer
+ckan -c /path/to/ckan.ini harvester fetch-consumer
+ckan -c /path/to/ckan.ini harvester run    # start pending jobs
 ```
 
-Make sure the ckanext-harvest extension is installed as well.
+## Development
 
-**Important: You need to have a sysadmin user called "harvest" on your CKAN instance!**
+CI runs `ruff` and `bandit` (see `.github/workflows/`). The tests under
+`ckanext/oaipmh/tests` come from the original project and are not
+maintained; the server was checked against a real `oaipmh.client.Client`
+on CKAN 2.12, every verb, paging and set filter included.
 
-### Setup the Harvester
+## Credits and license
 
-- add `oaipmh_harvester` to `ckan.plugins` in `development.ini` (or `production.ini`)
-- restart your webserver
-- with the web browser go to `<your ckan url>/harvest/new`
-- as URL fill in the base URL of an OAI-PMH conforming repository, e.g. http://boris.unibe.ch/cgi/oai2
-for more see http://www.openarchives.org/Register/BrowseSites
-- select **Source type** `OAI-PMH Harvester`
-- if your OAI-PMH needs credentials, add the following to the "Configuration" section: `{"username": "foo", "password": "bar" } `
-- if you only want to harvest a specific set, add the following to the "Configuration" section: `{"set": "baz"} `
-- if you want to harvest data in a specific metadata format, add the following to the "Configuration" section: `{"metadata_prefix": "oai_dc"}` (currently `oai_dc` and `oai_ddi` are supported)
-- if your OAI-PMH source does not support HTTP POST and you want to enforce HTTP GET, add the following to the "Configuration" section: `{"force_http_get": true}`  (defaults to `false`)
-- Save
-- on the harvest admin click **Reharvest**
-
-### Run the Harvester
-
-On the command line do this:
-
-- activate the python environment
-- `cd` to the ckan directory, e.g. `/usr/lib/ckan/default/src/ckan`
-- start the consumers:
-
-```bash
-# ckan >= 2.9
-ckan harvester gather-consumer
-ckan harvester fetch-consumer
-
-# ckan < 2.9
-paster --plugin=ckanext-oaipmh harvester gather_consumer
-paster --plugin=ckanext-oaipmh harvester fetch_consumer
-```
-
-- run the job:
-
-```bash
-# ckan >= 2.9
-ckan harvester run
-
-# ckan < 2.9
-paster --plugin=ckanext-oaipmh harvester run
-```
-
-The harvester should now start and import the OAI-PMH metadata.
-
-## Developing without running jobs manually
-
-To make it easier to develop, tests are setup that allow to do that:
-
-    . ~/default/bin/activate
-    cd /var/www/ckanext-oaipmh
-
-    nosetests --logging-filter=ckanext.oaipmh.harvester --ckan --with-pylons=test.ini ckanext/oaipmh/tests
-
-In this example the logging filter is used to only show messages of the harvester.
+Based on the [mediasuitenz](https://github.com/mediasuitenz/ckanext-oaipmh)
+version of the harvester first written for the kata project (CSC - IT
+Center for Science, Liip AG). Released under the GNU Affero
+General Public License v3.0 - see [`LICENSE.txt`](LICENSE.txt).
