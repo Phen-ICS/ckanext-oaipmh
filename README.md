@@ -1,4 +1,4 @@
-![CKAN](https://img.shields.io/badge/CKAN-2.12-orange)
+![CKAN](https://img.shields.io/badge/CKAN-2.12.1-orange)
 ![Python](https://img.shields.io/badge/python-3.12-blue)
 ![License](https://img.shields.io/badge/license-AGPL--3.0-blue)
 
